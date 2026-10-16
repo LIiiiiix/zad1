@@ -1,0 +1,44 @@
+### 1. Создать пользователя
+POST http://localhost:8080/api/users
+Content-Type: application/json
+
+{
+  "name": "Иван",
+  "email": "ivan@mail.ru"
+}
+
+### 2. Создать парковочную зону
+POST http://localhost:8080/api/parking-zones
+Content-Type: application/json
+
+{
+  "name": "Центр",
+  "capacity": 100,
+  "hourlyRate": 100
+}
+
+### 3. Создать автомобиль (owner id = 1)
+POST http://localhost:8080/api/vehicles
+Content-Type: application/json
+
+{
+  "plateNumber": "A777AA",
+  "owner": {
+    "id": 1
+  }
+}
+
+### 4. Начать парковку (vehicleId=1, zoneId=1)
+POST http://localhost:8080/api/parking-sessions/start?vehicleId=1&zoneId=1
+
+### 5. Завершить парковку (id=1)
+PATCH http://localhost:8080/api/parking-sessions/1/end
+
+### 6. Посмотреть все сессии
+GET http://localhost:8080/api/parking-sessions
+
+### 7. Купить абонемент на 30 дней
+POST http://localhost:8080/api/parking-passes/buy?vehicleId=1&zoneId=1&days=30
+
+### 8. Посмотреть все абонементы
+GET http://localhost:8080/api/parking-passes
