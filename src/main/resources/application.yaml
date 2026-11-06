@@ -1,6 +1,11 @@
 spring:
   application:
-    name: "СТУД-657867"
+    name: "CTVД-657867" # Оставь своё имя приложения
+
+  # === КРИТИЧЕСКИ ВАЖНОЕ ИЗМЕНЕНИЕ ===
+  # Отключаем автоматическую настройку безопасности, чтобы она не мешала нашему AuthService
+  autoconfigure:
+    exclude: org.springframework.boot.autoconfigure.security.servlet.SecurityAutoConfiguration
 
   datasource:
     url: jdbc:postgresql://localhost:5432/zad1_db
@@ -11,7 +16,7 @@ spring:
   jpa:
     database-platform: org.hibernate.dialect.PostgreSQLDialect
     hibernate:
-      ddl-auto: update
+      ddl-auto: create-drop # База будет очищаться при каждом старте (это нормально для теста)
     show-sql: true
     properties:
       hibernate:
@@ -19,3 +24,10 @@ spring:
 
 server:
   port: 8080
+
+# === ЛОГИРОВАНИЕ ДЛЯ ОТЛАДКИ ===
+logging:
+  level:
+    root: INFO
+    org.springframework.security: DEBUG  # Показывает причины отказов доступа
+    com.example.zad1: DEBUG              # Логи нашего кода

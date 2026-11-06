@@ -4,11 +4,12 @@ import com.example.zad1.model.*;
 import com.example.zad1.service.ParkingService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.net.URI;
 import java.util.List;
-import java.util.Map; // Импортируем Map для ответов бизнес-операций
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api")
@@ -17,24 +18,7 @@ public class ParkingController {
 
     private final ParkingService service;
 
-    // ==========================================
-    // === СТАНДАРТНЫЕ CRUD ОПЕРАЦИИ (Задание 2) ===
-    // ==========================================
-
-    // --- ПОЛЬЗОВАТЕЛИ ---
-
-    @PostMapping("/users")
-    public ResponseEntity<User> createUser(@RequestBody User user) {
-        User created = service.createUser(user);
-        return ResponseEntity.created(URI.create("/api/users/" + created.getId())).body(created);
-    }
-
-    @GetMapping("/users")
-    public List<User> getUsers() {
-        return service.getAllUsers();
-    }
-
-    // --- АВТОМОБИЛИ ---
+    // --- АВТОМОБИЛИ (владелец - текущий пользователь) ---
 
     @PostMapping("/vehicles")
     public ResponseEntity<Vehicle> createVehicle(@RequestBody Vehicle v) {
@@ -42,14 +26,16 @@ public class ParkingController {
         return ResponseEntity.created(URI.create("/api/vehicles/" + created.getId())).body(created);
     }
 
+    // USER видит только свои машины, ADMIN - все
     @GetMapping("/vehicles")
     public List<Vehicle> getVehicles() {
         return service.getAllVehicles();
     }
 
-    // --- ПАРКОВОЧНЫЕ ЗОНЫ ---
+    // --- ЗОНЫ ---
 
     @PostMapping("/parking-zones")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<ParkingZone> createZone(@RequestBody ParkingZone z) {
         ParkingZone created = service.createZone(z);
         return ResponseEntity.created(URI.create("/api/parking-zones/" + created.getId())).body(created);
@@ -60,16 +46,17 @@ public class ParkingController {
         return service.getAllZones();
     }
 
-    // --- ПАРКОВОЧНЫЕ СЕССИИ ---
+    // --- СЕССИИ ---
 
     @PostMapping("/parking-sessions/start")
+    @PreAuthorize("@access.ownsVehicle(#vehicleId)")
     public ResponseEntity<ParkingSession> start(@RequestParam Long vehicleId,
                                                 @RequestParam Long zoneId) {
-        ParkingSession s = service.startSession(vehicleId, zoneId);
-        return ResponseEntity.status(201).body(s);
+        return ResponseEntity.status(201).body(service.startSession(vehicleId, zoneId));
     }
 
     @PatchMapping("/parking-sessions/{id}/end")
+    @PreAuthorize("@access.ownsSession(#id)")
     public ResponseEntity<ParkingSession> end(@PathVariable Long id) {
         return ResponseEntity.ok(service.endSession(id));
     }
@@ -82,6 +69,7 @@ public class ParkingController {
     // --- АБОНЕМЕНТЫ ---
 
     @PostMapping("/parking-passes/buy")
+    @PreAuthorize("@access.ownsVehicle(#vehicleId)")
     public ResponseEntity<ParkingPass> buyPass(@RequestParam Long vehicleId,
                                                @RequestParam Long zoneId,
                                                @RequestParam int days) {
@@ -93,59 +81,45 @@ public class ParkingController {
         return service.getAllPasses();
     }
 
-
     // ==========================================
-    // === БИЗНЕС-ОПЕРАЦИИ (Задание 3) ===
+    // === БИЗНЕС-ОПЕРАЦИИ ===
     // ==========================================
 
-    /**
-     * Операция 1: Привязать авто к абонементу
-     */
+    // 1. Привязать авто к абонементу: и абонемент, и машина должны быть своими
     @PatchMapping("/parking-passes/{passId}/register-vehicle")
-    public ResponseEntity<ParkingPass> registerVehicleOnPass(
-            @PathVariable Long passId,
-            @RequestParam Long vehicleId) {
-        ParkingPass updatedPass = service.registerVehicleOnPass(passId, vehicleId);
-        return ResponseEntity.ok(updatedPass);
+    @PreAuthorize("@access.ownsPass(#passId) and @access.ownsVehicle(#vehicleId)")
+    public ResponseEntity<ParkingPass> registerVehicleOnPass(@PathVariable Long passId,
+                                                             @RequestParam Long vehicleId) {
+        return ResponseEntity.ok(service.registerVehicleOnPass(passId, vehicleId));
     }
 
-    /**
-     * Операция 2: Продлить абонемент
-     */
+    // 2. Продлить абонемент
     @PatchMapping("/parking-passes/{passId}/extend")
-    public ResponseEntity<Map<String, Object>> extendPass(
-            @PathVariable Long passId,
-            @RequestParam int days) {
-        Map<String, Object> result = service.extendPass(passId, days);
-        return ResponseEntity.ok(result);
+    @PreAuthorize("@access.ownsPass(#passId)")
+    public ResponseEntity<Map<String, Object>> extendPass(@PathVariable Long passId,
+                                                          @RequestParam int days) {
+        return ResponseEntity.ok(service.extendPass(passId, days));
     }
 
-    /**
-     * Операция 3: Перенести сессию в другую зону
-     */
+    // 3. Перенести сессию в другую зону
     @PostMapping("/parking-sessions/{sessionId}/move")
-    public ResponseEntity<Map<String, Object>> moveSessionToZone(
-            @PathVariable Long sessionId,
-            @RequestParam Long newZoneId) {
-        Map<String, Object> result = service.moveSessionToZone(sessionId, newZoneId);
-        return ResponseEntity.ok(result);
+    @PreAuthorize("@access.ownsSession(#sessionId)")
+    public ResponseEntity<Map<String, Object>> moveSessionToZone(@PathVariable Long sessionId,
+                                                                 @RequestParam Long newZoneId) {
+        return ResponseEntity.ok(service.moveSessionToZone(sessionId, newZoneId));
     }
 
-    /**
-     * Операция 4: Оформить возврат за абонемент
-     */
+    // 4. Возврат за абонемент
     @PatchMapping("/parking-passes/{passId}/refund")
+    @PreAuthorize("@access.ownsPass(#passId)")
     public ResponseEntity<Map<String, Object>> refundPass(@PathVariable Long passId) {
-        Map<String, Object> result = service.refundPass(passId);
-        return ResponseEntity.ok(result);
+        return ResponseEntity.ok(service.refundPass(passId));
     }
 
-    /**
-     * Операция 5: Статистика пользователя
-     */
+    // 5. Статистика: только своя (ADMIN - любая)
     @GetMapping("/users/{userId}/stats")
+    @PreAuthorize("@access.isSelf(#userId)")
     public ResponseEntity<Map<String, Object>> getUserStats(@PathVariable Long userId) {
-        Map<String, Object> stats = service.getUserStats(userId);
-        return ResponseEntity.ok(stats);
+        return ResponseEntity.ok(service.getUserStats(userId));
     }
 }

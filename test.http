@@ -1,73 +1,123 @@
-### ==========================================
-### ЧАСТЬ 1: СОЗДАНИЕ БАЗОВЫХ ДАННЫХ (CRUD)
-### ==========================================
+@mariaPass = Secret123
+@adminPass = Admin2026!
 
-### 1. Создать пользователя (ID будет 1)
-POST http://localhost:8080/api/users
+### CSRF-токен
+GET http://localhost:8080/api/auth/csrf
+
+> {% client.global.set("csrfToken", response.body.token); %}
+
+### Регистрируем Анну (уникальный email при каждом прогоне)
+< {% client.global.set("annaEmail", "anna_" + Date.now() + "@test.ru"); %}
+POST http://localhost:8080/api/auth/register
 Content-Type: application/json
+X-XSRF-TOKEN: {{csrfToken}}
 
-{
-  "name": "Иван",
-  "email": "ivan@mail.ru"
-}
+{ "username": "Анна", "email": "{{annaEmail}}", "password": "Anna2026!" }
 
-### 2. Создать парковочную зону "Центр" (ID будет 1)
+### Мария создаёт зону -> 403
 POST http://localhost:8080/api/parking-zones
+Authorization: Basic maria@test.ru {{mariaPass}}
+X-XSRF-TOKEN: {{csrfToken}}
 Content-Type: application/json
 
-{
-  "name": "Центр",
-  "capacity": 50,
-  "hourlyRate": 100
-}
+{ "name": "Взлом", "capacity": 5, "hourlyRate": 1 }
 
-### 3. Создать вторую зону "Север" (ID будет 2) - нужна для теста переноса
+### Админ создаёт зону -> 201
 POST http://localhost:8080/api/parking-zones
+Authorization: Basic admin@test.ru {{adminPass}}
+X-XSRF-TOKEN: {{csrfToken}}
 Content-Type: application/json
 
-{
-  "name": "Север",
-  "capacity": 10,
-  "hourlyRate": 50
-}
+{ "name": "Центр", "capacity": 10, "hourlyRate": 100 }
 
-### 4. Создать автомобиль (ID будет 1), владелец Иван (id=1)
+> {% client.global.set("zoneId", response.body.id); %}
+
+### Мария добавляет машину, подсовывая чужого владельца -> 201, владелец всё равно Мария
 POST http://localhost:8080/api/vehicles
+Authorization: Basic maria@test.ru {{mariaPass}}
+X-XSRF-TOKEN: {{csrfToken}}
 Content-Type: application/json
 
-{
-  "plateNumber": "A777AA",
-  "owner": {
-    "id": 1
-  }
-}
+{ "plateNumber": "А111АА77", "owner": { "id": 2 } }
 
-### 5. Начать парковку машины 1 в зоне 1 (Сессия ID будет 1)
-POST http://localhost:8080/api/parking-sessions/start?vehicleId=1&zoneId=1
+> {% client.global.set("mariaCar", response.body.id); %}
 
-### 6. Купить абонемент для машины 1 на зону 1 сроком 30 дней (Абонемент ID будет 1)
-POST http://localhost:8080/api/parking-passes/buy?vehicleId=1&zoneId=1&days=30
+### Анна добавляет машину -> 201
+POST http://localhost:8080/api/vehicles
+Authorization: Basic {{annaEmail}} Anna2026!
+X-XSRF-TOKEN: {{csrfToken}}
+Content-Type: application/json
 
+{ "plateNumber": "В222ВВ77" }
 
-### ==========================================
-### ЧАСТЬ 2: БИЗНЕС-ОПЕРАЦИИ (ЗАДАНИЕ 3)
-### ==========================================
+> {% client.global.set("annaCar", response.body.id); %}
 
-### Операция 1: Продлить абонемент №1 ещё на 15 дней
-# Ожидаем ответ 200 OK + JSON с новой датой и стоимостью
-PATCH http://localhost:8080/api/parking-passes/1/extend?days=15
+### Хэша пароля в ответе нет, Мария видит только свою машину -> 200
+GET http://localhost:8080/api/vehicles
+Authorization: Basic maria@test.ru {{mariaPass}}
 
-### Операция 2: Перенести активную сессию №1 из зоны "Центр" в зону "Север" (zoneId=2)
-# Это завершит старую сессию (посчитает деньги за Центр) и создаст новую (для Севера)
-POST http://localhost:8080/api/parking-sessions/1/move?newZoneId=2
+### Мария паркует машину Анны -> 403
+POST http://localhost:8080/api/parking-sessions/start?vehicleId={{annaCar}}&zoneId={{zoneId}}
+Authorization: Basic maria@test.ru {{mariaPass}}
+X-XSRF-TOKEN: {{csrfToken}}
 
-### Операция 3: Оформить возврат денег за абонемент №1
-# Абонемент станет неактивным, вернется сумма за оставшиеся дни
-PATCH http://localhost:8080/api/parking-passes/1/refund
+### Мария паркует свою машину -> 201
+POST http://localhost:8080/api/parking-sessions/start?vehicleId={{mariaCar}}&zoneId={{zoneId}}
+Authorization: Basic maria@test.ru {{mariaPass}}
+X-XSRF-TOKEN: {{csrfToken}}
 
-### Операция 4: Посмотреть статистику пользователя №1 (Ивана)
-# Должно показать общее потраченное время, суммы и посещенные зоны
-GET http://localhost:8080/api/users/1/stats
+> {% client.global.set("mariaSession", response.body.id); %}
 
-### Операция 5: Проверить список всех сессий (убедиться, что появились новые записи после переноса)
+### Вторая сессия той же машины -> 409
+POST http://localhost:8080/api/parking-sessions/start?vehicleId={{mariaCar}}&zoneId={{zoneId}}
+Authorization: Basic maria@test.ru {{mariaPass}}
+X-XSRF-TOKEN: {{csrfToken}}
+
+### Анна завершает сессию Марии -> 403
+PATCH http://localhost:8080/api/parking-sessions/{{mariaSession}}/end
+Authorization: Basic {{annaEmail}} Anna2026!
+X-XSRF-TOKEN: {{csrfToken}}
+
+### Анна не видит чужих сессий -> 200, []
 GET http://localhost:8080/api/parking-sessions
+Authorization: Basic {{annaEmail}} Anna2026!
+
+### Отрицательный срок абонемента -> 400
+POST http://localhost:8080/api/parking-passes/buy?vehicleId={{mariaCar}}&zoneId={{zoneId}}&days=-30
+Authorization: Basic maria@test.ru {{mariaPass}}
+X-XSRF-TOKEN: {{csrfToken}}
+
+### Мария покупает абонемент -> 201
+POST http://localhost:8080/api/parking-passes/buy?vehicleId={{mariaCar}}&zoneId={{zoneId}}&days=30
+Authorization: Basic maria@test.ru {{mariaPass}}
+X-XSRF-TOKEN: {{csrfToken}}
+
+> {% client.global.set("mariaPassId", response.body.id); %}
+
+### Анна оформляет возврат за абонемент Марии -> 403
+PATCH http://localhost:8080/api/parking-passes/{{mariaPassId}}/refund
+Authorization: Basic {{annaEmail}} Anna2026!
+X-XSRF-TOKEN: {{csrfToken}}
+
+### Анна смотрит статистику Марии -> 403
+GET http://localhost:8080/api/users/1/stats
+Authorization: Basic {{annaEmail}} Anna2026!
+
+### Мария смотрит свою статистику -> 200
+GET http://localhost:8080/api/users/1/stats
+Authorization: Basic maria@test.ru {{mariaPass}}
+
+### Несуществующая сессия -> 404 (не 500)
+PATCH http://localhost:8080/api/parking-sessions/999999/end
+Authorization: Basic maria@test.ru {{mariaPass}}
+X-XSRF-TOKEN: {{csrfToken}}
+
+### Мария завершает свою сессию -> 200, сумма посчитана
+PATCH http://localhost:8080/api/parking-sessions/{{mariaSession}}/end
+Authorization: Basic maria@test.ru {{mariaPass}}
+X-XSRF-TOKEN: {{csrfToken}}
+
+### Повторное завершение -> 409 (не 500)
+PATCH http://localhost:8080/api/parking-sessions/{{mariaSession}}/end
+Authorization: Basic maria@test.ru {{mariaPass}}
+X-XSRF-TOKEN: {{csrfToken}}

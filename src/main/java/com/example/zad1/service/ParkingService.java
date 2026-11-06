@@ -4,105 +4,106 @@ import com.example.zad1.model.*;
 import com.example.zad1.repositoriy.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
+@Transactional // каждая операция - одна транзакция: либо целиком, либо откат
 public class ParkingService {
 
-    // Подключаем все репозитории
     private final UserRepository userRepo;
     private final VehicleRepository vehicleRepo;
     private final ParkingZoneRepository zoneRepo;
     private final ParkingSessionRepository sessionRepo;
     private final ParkingPassRepository passRepo;
+    private final CurrentUserService currentUser;
 
-    // --- ПОЛЬЗОВАТЕЛИ И АВТО (простое сохранение) ---
-
-    public User createUser(User user) {
-        return userRepo.save(user);
-    }
-
-    public List<User> getAllUsers() {
-        return userRepo.findAll();
-    }
+    // --- АВТОМОБИЛИ ---
 
     public Vehicle createVehicle(Vehicle v) {
+        if (v.getPlateNumber() == null || v.getPlateNumber().isBlank()) {
+            throw new IllegalArgumentException("Госномер обязателен");
+        }
+        v.setId(null);                  // нельзя перезаписать чужую запись, подсунув id
+        v.setOwner(currentUser.get());  // владелец - тот, кто вошёл, а не тот, кого прислали
         return vehicleRepo.save(v);
     }
 
+    @Transactional(readOnly = true)
     public List<Vehicle> getAllVehicles() {
-        return vehicleRepo.findAll();
+        return currentUser.isAdmin()
+                ? vehicleRepo.findAll()
+                : vehicleRepo.findByOwner_Email(currentUser.email());
     }
 
+    // --- ЗОНЫ ---
+
     public ParkingZone createZone(ParkingZone z) {
+        z.setId(null);
         return zoneRepo.save(z);
     }
 
+    @Transactional(readOnly = true)
     public List<ParkingZone> getAllZones() {
         return zoneRepo.findAll();
     }
 
-    // --- БИЗНЕС-ЛОГИКА ПАРКОВКИ (CRUD из задания 2) ---
+    // --- СЕССИИ ---
 
-    // 1. Начать парковку
     public ParkingSession startSession(Long vehicleId, Long zoneId) {
-        Vehicle vehicle = vehicleRepo.findById(vehicleId)
-                .orElseThrow(() -> new RuntimeException("Авто не найдено"));
-        ParkingZone zone = zoneRepo.findById(zoneId)
-                .orElseThrow(() -> new RuntimeException("Зона не найдена"));
+        Vehicle vehicle = findVehicle(vehicleId);
+        ParkingZone zone = findZone(zoneId);
+
+        if (sessionRepo.existsByVehicle_IdAndActiveTrue(vehicleId)) {
+            throw new IllegalStateException("У авто уже есть активная парковочная сессия");
+        }
+        if (sessionRepo.countByZone_IdAndActiveTrue(zoneId) >= zone.getCapacity()) {
+            throw new IllegalStateException("В зоне нет свободных мест");
+        }
 
         ParkingSession session = new ParkingSession();
         session.setVehicle(vehicle);
         session.setZone(zone);
-        session.setEntryTime(LocalDateTime.now()); // время ставит СЕРВЕР
+        session.setEntryTime(LocalDateTime.now());
         session.setActive(true);
         session.setTotalAmount(BigDecimal.ZERO);
-
         return sessionRepo.save(session);
     }
 
-    // 2. Завершить парковку (расчёт стоимости)
     public ParkingSession endSession(Long sessionId) {
-        ParkingSession session = sessionRepo.findById(sessionId)
-                .orElseThrow(() -> new RuntimeException("Сессия не найдена"));
-
+        ParkingSession session = findSession(sessionId);
         if (!session.isActive()) {
-            throw new RuntimeException("Сессия уже завершена");
+            throw new IllegalStateException("Сессия уже завершена");
         }
 
-        LocalDateTime now = LocalDateTime.now(); // время выхода - текущее
+        LocalDateTime now = LocalDateTime.now();
         session.setExitTime(now);
         session.setActive(false);
-
-        // считаем часы
-        long hours = Duration.between(session.getEntryTime(), now).toHours();
-        if (hours == 0) hours = 1; // минимум 1 час
-
-        // считаем деньги: часы * цена зоны
-        BigDecimal cost = session.getZone().getHourlyRate()
-                .multiply(BigDecimal.valueOf(hours));
-        session.setTotalAmount(cost);
-
+        session.setTotalAmount(calculateCost(session, now));
         return sessionRepo.save(session);
     }
 
-    // 3. Купить абонемент
+    @Transactional(readOnly = true)
+    public List<ParkingSession> getAllSessions() {
+        return currentUser.isAdmin()
+                ? sessionRepo.findAll()
+                : sessionRepo.findByVehicle_Owner_Email(currentUser.email());
+    }
+
+    // --- АБОНЕМЕНТЫ ---
+
     public ParkingPass buyPass(Long vehicleId, Long zoneId, int days) {
-        Vehicle vehicle = vehicleRepo.findById(vehicleId)
-                .orElseThrow(() -> new RuntimeException("Авто не найдено"));
-        ParkingZone zone = zoneRepo.findById(zoneId)
-                .orElseThrow(() -> new RuntimeException("Зона не найдена"));
+        checkDays(days);
+        Vehicle vehicle = findVehicle(vehicleId);
+        ParkingZone zone = findZone(zoneId);
 
         ParkingPass pass = new ParkingPass();
         pass.setVehicle(vehicle);
@@ -110,73 +111,52 @@ public class ParkingService {
         pass.setStartDate(LocalDate.now());
         pass.setEndDate(LocalDate.now().plusDays(days));
         pass.setActive(true);
-
         return passRepo.save(pass);
     }
 
-    // Списки всех сессий и абонементов
-    public List<ParkingSession> getAllSessions() {
-        return sessionRepo.findAll();
-    }
-
+    @Transactional(readOnly = true)
     public List<ParkingPass> getAllPasses() {
-        return passRepo.findAll();
+        return currentUser.isAdmin()
+                ? passRepo.findAll()
+                : passRepo.findByVehicle_Owner_Email(currentUser.email());
     }
 
-
     // ==========================================
-    // === НОВЫЕ БИЗНЕС-ОПЕРАЦИИ (ЗАДАНИЕ 3) ===
+    // === БИЗНЕС-ОПЕРАЦИИ (ЗАДАНИЕ 3) ===
     // ==========================================
 
-    /**
-     * Операция 1: Зарегистрировать автомобиль на существующий абонемент.
-     * Затрагивает: ParkingPass + Vehicle
-     */
+    // Операция 1: привязать авто к абонементу
     public ParkingPass registerVehicleOnPass(Long passId, Long vehicleId) {
-        ParkingPass pass = passRepo.findById(passId)
-                .orElseThrow(() -> new RuntimeException("Абонемент не найден"));
-        Vehicle vehicle = vehicleRepo.findById(vehicleId)
-                .orElseThrow(() -> new RuntimeException("Авто не найдено"));
+        ParkingPass pass = findPass(passId);
+        Vehicle vehicle = findVehicle(vehicleId);
 
         if (!pass.isActive()) {
-            throw new RuntimeException("Абонемент не активен");
+            throw new IllegalStateException("Абонемент не активен");
         }
 
-        // Проверка целостности: нет ли у этого авто другого активного абонемента в этой зоне?
-        List<ParkingPass> activePassesForThisCarAndZone = passRepo.findAll().stream()
+        boolean hasDuplicate = passRepo.findAll().stream()
                 .filter(p -> p.isActive()
                         && p.getVehicle() != null
                         && p.getVehicle().getId().equals(vehicleId)
                         && p.getZone().getId().equals(pass.getZone().getId()))
-                .toList();
-
-        // Если нашли хотя бы один другой (не тот, который редактируем), то ошибка
-        boolean hasDuplicate = activePassesForThisCarAndZone.stream()
                 .anyMatch(p -> !p.getId().equals(passId));
-
         if (hasDuplicate) {
-            throw new RuntimeException("У авто уже есть активный абонемент в этой зоне");
+            throw new IllegalStateException("У авто уже есть активный абонемент в этой зоне");
         }
 
         pass.setVehicle(vehicle);
         return passRepo.save(pass);
     }
 
-    /**
-     * Операция 2: Продлить абонемент.
-     * Затрагивает: ParkingPass + ParkingZone (для расчета цены)
-     */
+    // Операция 2: продлить абонемент
     public Map<String, Object> extendPass(Long passId, int days) {
-        ParkingPass pass = passRepo.findById(passId)
-                .orElseThrow(() -> new RuntimeException("Абонемент не найден"));
-
+        checkDays(days);
+        ParkingPass pass = findPass(passId);
         if (!pass.isActive()) {
-            throw new RuntimeException("Абонемент не активен");
+            throw new IllegalStateException("Абонемент не активен");
         }
 
         LocalDate newEndDate = pass.getEndDate().plusDays(days);
-
-        // Расчет стоимости продления (условно: дни * цена зоны за час * 24 часа)
         BigDecimal cost = pass.getZone().getHourlyRate()
                 .multiply(BigDecimal.valueOf(days))
                 .multiply(BigDecimal.valueOf(24));
@@ -191,43 +171,30 @@ public class ParkingService {
         return result;
     }
 
-    /**
-     * Операция 3: Перенести парковочную сессию в другую зону.
-     * Затрагивает: ParkingSession + ParkingZone (старая и новая)
-     */
+    // Операция 3: перенести сессию в другую зону (две записи - одна транзакция)
     public Map<String, Object> moveSessionToZone(Long sessionId, Long newZoneId) {
-        ParkingSession session = sessionRepo.findById(sessionId)
-                .orElseThrow(() -> new RuntimeException("Сессия не найдена"));
-        ParkingZone newZone = zoneRepo.findById(newZoneId)
-                .orElseThrow(() -> new RuntimeException("Новая зона не найдена"));
+        ParkingSession session = findSession(sessionId);
+        ParkingZone newZone = findZone(newZoneId);
 
         if (!session.isActive()) {
-            throw new RuntimeException("Сессия уже завершена");
+            throw new IllegalStateException("Сессия уже завершена");
+        }
+        if (session.getZone().getId().equals(newZoneId)) {
+            throw new IllegalStateException("Машина уже находится в этой зоне");
+        }
+        if (sessionRepo.countByZone_IdAndActiveTrue(newZoneId) >= newZone.getCapacity()) {
+            throw new IllegalStateException("В новой зоне нет свободных мест");
         }
 
-        // Проверка вместимости новой зоны
-        long activeSessionsInNewZone = sessionRepo.findAll().stream()
-                .filter(s -> s.isActive() && s.getZone().getId().equals(newZoneId))
-                .count();
-
-        if (activeSessionsInNewZone >= newZone.getCapacity()) {
-            throw new RuntimeException("В новой зоне нет свободных мест");
-        }
-
-        // 1. Завершаем старую сессию (фиксируем стоимость по старой зоне)
+        // 1. Завершаем старую сессию
         LocalDateTime now = LocalDateTime.now();
         session.setExitTime(now);
         session.setActive(false);
-
-        long hoursOld = Duration.between(session.getEntryTime(), now).toHours();
-        if (hoursOld == 0) hoursOld = 1; // минимум 1 час
-
-        BigDecimal costOld = session.getZone().getHourlyRate()
-                .multiply(BigDecimal.valueOf(hoursOld));
+        BigDecimal costOld = calculateCost(session, now);
         session.setTotalAmount(costOld);
         sessionRepo.save(session);
 
-        // 2. Создаем новую сессию в новой зоне
+        // 2. Создаём новую в новой зоне
         ParkingSession newSession = new ParkingSession();
         newSession.setVehicle(session.getVehicle());
         newSession.setZone(newZone);
@@ -244,31 +211,23 @@ public class ParkingService {
         return result;
     }
 
-    /**
-     * Операция 4: Оформить возврат за неиспользованный абонемент.
-     * Затрагивает: ParkingPass + ParkingZone
-     */
+    // Операция 4: возврат за неиспользованный абонемент
     public Map<String, Object> refundPass(Long passId) {
-        ParkingPass pass = passRepo.findById(passId)
-                .orElseThrow(() -> new RuntimeException("Абонемент не найден"));
-
+        ParkingPass pass = findPass(passId);
         if (!pass.isActive()) {
-            throw new RuntimeException("Абонемент уже не активен или удален");
+            throw new IllegalStateException("Абонемент уже не активен");
         }
 
         LocalDate today = LocalDate.now();
         if (pass.getEndDate().isBefore(today)) {
-            throw new RuntimeException("Срок абонемента истек, возврат невозможен");
+            throw new IllegalStateException("Срок абонемента истек, возврат невозможен");
         }
 
-        // Считаем сколько дней осталось
         long remainingDays = ChronoUnit.DAYS.between(today, pass.getEndDate());
-
-        // Возврат = остаток дней * суточная ставка (цена_за_час * 24)
         BigDecimal dailyRate = pass.getZone().getHourlyRate().multiply(BigDecimal.valueOf(24));
         BigDecimal refund = dailyRate.multiply(BigDecimal.valueOf(remainingDays));
 
-        pass.setActive(false); // Деактивируем абонемент
+        pass.setActive(false);
         passRepo.save(pass);
 
         Map<String, Object> result = new HashMap<>();
@@ -278,42 +237,25 @@ public class ParkingService {
         return result;
     }
 
-    /**
-     * Операция 5: Получить статистику парковки по пользователю.
-     * Затрагивает: User + Vehicle + ParkingSession + ParkingZone
-     */
+    // Операция 5: статистика пользователя
+    @Transactional(readOnly = true)
     public Map<String, Object> getUserStats(Long userId) {
         User user = userRepo.findById(userId)
-                .orElseThrow(() -> new RuntimeException("Пользователь не найден"));
+                .orElseThrow(() -> new NoSuchElementException("Пользователь не найден"));
 
-        // Находим все машины пользователя
         List<Vehicle> vehicles = vehicleRepo.findAll().stream()
                 .filter(v -> v.getOwner() != null && v.getOwner().getId().equals(userId))
                 .toList();
-
-        if (vehicles.isEmpty()) {
-            Map<String, Object> emptyStats = new HashMap<>();
-            emptyStats.put("userName", user.getName());
-            emptyStats.put("totalSessions", 0);
-            emptyStats.put("totalSpent", BigDecimal.ZERO);
-            emptyStats.put("visitedZones", Set.of());
-            emptyStats.put("vehicleCount", 0);
-            return emptyStats;
-        }
-
         List<Long> vehicleIds = vehicles.stream().map(Vehicle::getId).toList();
 
-        // Находим все ЗАВЕРШЕННЫЕ сессии этих машин
         List<ParkingSession> completedSessions = sessionRepo.findAll().stream()
                 .filter(s -> !s.isActive() && vehicleIds.contains(s.getVehicle().getId()))
                 .toList();
 
-        // Суммируем расходы
         BigDecimal totalSpent = completedSessions.stream()
                 .map(ParkingSession::getTotalAmount)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
-        // Уникальные зоны
         Set<String> visitedZones = completedSessions.stream()
                 .map(s -> s.getZone().getName())
                 .collect(Collectors.toSet());
@@ -324,7 +266,42 @@ public class ParkingService {
         stats.put("totalSpent", totalSpent);
         stats.put("visitedZones", visitedZones);
         stats.put("vehicleCount", vehicles.size());
-
         return stats;
+    }
+
+    // --- вспомогательные ---
+
+    private BigDecimal calculateCost(ParkingSession session, LocalDateTime exit) {
+        long hours = Duration.between(session.getEntryTime(), exit).toHours();
+        if (hours == 0) {
+            hours = 1; // минимум 1 час
+        }
+        return session.getZone().getHourlyRate().multiply(BigDecimal.valueOf(hours));
+    }
+
+    private void checkDays(int days) {
+        if (days <= 0 || days > 365) {
+            throw new IllegalArgumentException("Количество дней должно быть от 1 до 365");
+        }
+    }
+
+    private Vehicle findVehicle(Long id) {
+        return vehicleRepo.findById(id)
+                .orElseThrow(() -> new NoSuchElementException("Авто не найдено"));
+    }
+
+    private ParkingZone findZone(Long id) {
+        return zoneRepo.findById(id)
+                .orElseThrow(() -> new NoSuchElementException("Зона не найдена"));
+    }
+
+    private ParkingSession findSession(Long id) {
+        return sessionRepo.findById(id)
+                .orElseThrow(() -> new NoSuchElementException("Сессия не найдена"));
+    }
+
+    private ParkingPass findPass(Long id) {
+        return passRepo.findById(id)
+                .orElseThrow(() -> new NoSuchElementException("Абонемент не найден"));
     }
 }
