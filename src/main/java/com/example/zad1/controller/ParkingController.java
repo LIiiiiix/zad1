@@ -8,6 +8,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.net.URI;
 import java.util.List;
+import java.util.Map; // Импортируем Map для ответов бизнес-операций
 
 @RestController
 @RequestMapping("/api")
@@ -16,7 +17,11 @@ public class ParkingController {
 
     private final ParkingService service;
 
-    // === ПОЛЬЗОВАТЕЛИ ===
+    // ==========================================
+    // === СТАНДАРТНЫЕ CRUD ОПЕРАЦИИ (Задание 2) ===
+    // ==========================================
+
+    // --- ПОЛЬЗОВАТЕЛИ ---
 
     @PostMapping("/users")
     public ResponseEntity<User> createUser(@RequestBody User user) {
@@ -29,7 +34,7 @@ public class ParkingController {
         return service.getAllUsers();
     }
 
-    // === АВТОМОБИЛИ ===
+    // --- АВТОМОБИЛИ ---
 
     @PostMapping("/vehicles")
     public ResponseEntity<Vehicle> createVehicle(@RequestBody Vehicle v) {
@@ -42,7 +47,7 @@ public class ParkingController {
         return service.getAllVehicles();
     }
 
-    // === ПАРКОВОЧНЫЕ ЗОНЫ ===
+    // --- ПАРКОВОЧНЫЕ ЗОНЫ ---
 
     @PostMapping("/parking-zones")
     public ResponseEntity<ParkingZone> createZone(@RequestBody ParkingZone z) {
@@ -55,9 +60,8 @@ public class ParkingController {
         return service.getAllZones();
     }
 
-    // === ПАРКОВОЧНЫЕ СЕССИИ ===
+    // --- ПАРКОВОЧНЫЕ СЕССИИ ---
 
-    // Начать парковку: передаём ID машины и ID зоны
     @PostMapping("/parking-sessions/start")
     public ResponseEntity<ParkingSession> start(@RequestParam Long vehicleId,
                                                 @RequestParam Long zoneId) {
@@ -65,7 +69,6 @@ public class ParkingController {
         return ResponseEntity.status(201).body(s);
     }
 
-    // Завершить парковку (расчёт стоимости)
     @PatchMapping("/parking-sessions/{id}/end")
     public ResponseEntity<ParkingSession> end(@PathVariable Long id) {
         return ResponseEntity.ok(service.endSession(id));
@@ -76,7 +79,7 @@ public class ParkingController {
         return service.getAllSessions();
     }
 
-    // === АБОНЕМЕНТЫ ===
+    // --- АБОНЕМЕНТЫ ---
 
     @PostMapping("/parking-passes/buy")
     public ResponseEntity<ParkingPass> buyPass(@RequestParam Long vehicleId,
@@ -88,5 +91,61 @@ public class ParkingController {
     @GetMapping("/parking-passes")
     public List<ParkingPass> getPasses() {
         return service.getAllPasses();
+    }
+
+
+    // ==========================================
+    // === БИЗНЕС-ОПЕРАЦИИ (Задание 3) ===
+    // ==========================================
+
+    /**
+     * Операция 1: Привязать авто к абонементу
+     */
+    @PatchMapping("/parking-passes/{passId}/register-vehicle")
+    public ResponseEntity<ParkingPass> registerVehicleOnPass(
+            @PathVariable Long passId,
+            @RequestParam Long vehicleId) {
+        ParkingPass updatedPass = service.registerVehicleOnPass(passId, vehicleId);
+        return ResponseEntity.ok(updatedPass);
+    }
+
+    /**
+     * Операция 2: Продлить абонемент
+     */
+    @PatchMapping("/parking-passes/{passId}/extend")
+    public ResponseEntity<Map<String, Object>> extendPass(
+            @PathVariable Long passId,
+            @RequestParam int days) {
+        Map<String, Object> result = service.extendPass(passId, days);
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * Операция 3: Перенести сессию в другую зону
+     */
+    @PostMapping("/parking-sessions/{sessionId}/move")
+    public ResponseEntity<Map<String, Object>> moveSessionToZone(
+            @PathVariable Long sessionId,
+            @RequestParam Long newZoneId) {
+        Map<String, Object> result = service.moveSessionToZone(sessionId, newZoneId);
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * Операция 4: Оформить возврат за абонемент
+     */
+    @PatchMapping("/parking-passes/{passId}/refund")
+    public ResponseEntity<Map<String, Object>> refundPass(@PathVariable Long passId) {
+        Map<String, Object> result = service.refundPass(passId);
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * Операция 5: Статистика пользователя
+     */
+    @GetMapping("/users/{userId}/stats")
+    public ResponseEntity<Map<String, Object>> getUserStats(@PathVariable Long userId) {
+        Map<String, Object> stats = service.getUserStats(userId);
+        return ResponseEntity.ok(stats);
     }
 }

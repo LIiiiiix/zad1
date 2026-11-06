@@ -1,4 +1,8 @@
-### 1. Создать пользователя
+### ==========================================
+### ЧАСТЬ 1: СОЗДАНИЕ БАЗОВЫХ ДАННЫХ (CRUD)
+### ==========================================
+
+### 1. Создать пользователя (ID будет 1)
 POST http://localhost:8080/api/users
 Content-Type: application/json
 
@@ -7,17 +11,27 @@ Content-Type: application/json
   "email": "ivan@mail.ru"
 }
 
-### 2. Создать парковочную зону
+### 2. Создать парковочную зону "Центр" (ID будет 1)
 POST http://localhost:8080/api/parking-zones
 Content-Type: application/json
 
 {
   "name": "Центр",
-  "capacity": 100,
+  "capacity": 50,
   "hourlyRate": 100
 }
 
-### 3. Создать автомобиль (owner id = 1)
+### 3. Создать вторую зону "Север" (ID будет 2) - нужна для теста переноса
+POST http://localhost:8080/api/parking-zones
+Content-Type: application/json
+
+{
+  "name": "Север",
+  "capacity": 10,
+  "hourlyRate": 50
+}
+
+### 4. Создать автомобиль (ID будет 1), владелец Иван (id=1)
 POST http://localhost:8080/api/vehicles
 Content-Type: application/json
 
@@ -28,17 +42,32 @@ Content-Type: application/json
   }
 }
 
-### 4. Начать парковку (vehicleId=1, zoneId=1)
+### 5. Начать парковку машины 1 в зоне 1 (Сессия ID будет 1)
 POST http://localhost:8080/api/parking-sessions/start?vehicleId=1&zoneId=1
 
-### 5. Завершить парковку (id=1)
-PATCH http://localhost:8080/api/parking-sessions/1/end
-
-### 6. Посмотреть все сессии
-GET http://localhost:8080/api/parking-sessions
-
-### 7. Купить абонемент на 30 дней
+### 6. Купить абонемент для машины 1 на зону 1 сроком 30 дней (Абонемент ID будет 1)
 POST http://localhost:8080/api/parking-passes/buy?vehicleId=1&zoneId=1&days=30
 
-### 8. Посмотреть все абонементы
-GET http://localhost:8080/api/parking-passes
+
+### ==========================================
+### ЧАСТЬ 2: БИЗНЕС-ОПЕРАЦИИ (ЗАДАНИЕ 3)
+### ==========================================
+
+### Операция 1: Продлить абонемент №1 ещё на 15 дней
+# Ожидаем ответ 200 OK + JSON с новой датой и стоимостью
+PATCH http://localhost:8080/api/parking-passes/1/extend?days=15
+
+### Операция 2: Перенести активную сессию №1 из зоны "Центр" в зону "Север" (zoneId=2)
+# Это завершит старую сессию (посчитает деньги за Центр) и создаст новую (для Севера)
+POST http://localhost:8080/api/parking-sessions/1/move?newZoneId=2
+
+### Операция 3: Оформить возврат денег за абонемент №1
+# Абонемент станет неактивным, вернется сумма за оставшиеся дни
+PATCH http://localhost:8080/api/parking-passes/1/refund
+
+### Операция 4: Посмотреть статистику пользователя №1 (Ивана)
+# Должно показать общее потраченное время, суммы и посещенные зоны
+GET http://localhost:8080/api/users/1/stats
+
+### Операция 5: Проверить список всех сессий (убедиться, что появились новые записи после переноса)
+GET http://localhost:8080/api/parking-sessions
