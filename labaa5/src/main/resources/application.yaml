@@ -1,0 +1,36 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: labaa5-jwt-auth
+
+
+  datasource:
+    url: jdbc:postgresql://localhost:5432/zad1_db
+    username: zad1_user
+    password: Johnny2077
+    driver-class-name: org.postgresql.Driver
+
+
+  jpa:
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+
+
+logging:
+  level:
+    root: INFO
+    org.springframework.security: DEBUG
+    com.example.labaa5: DEBUG
+
+
+jwt:
+  secret: "MySuperSecretKeyForHS256AlgorithmMustBeAtLeast32CharsLong!"
+  access-token-expiration-ms: 900000
+  refresh-token-expiration-ms: 86400000
